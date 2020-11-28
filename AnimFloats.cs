@@ -67,7 +67,7 @@ namespace Paleo.Common {
         }
 
         Coroutine _coroutine;
-        List<AnimData> _vals;
+        List<AnimData> _anims;
         MonoBehaviour _host;
         WaitForSeconds _timer;
         readonly decimal _duration;
@@ -85,7 +85,7 @@ namespace Paleo.Common {
             // Stored in milliseconds.
             _duration = (decimal)duration * 1000;
             _timer = new WaitForSeconds(1f / fps);
-            _vals = new List<AnimData>();
+            _anims = new List<AnimData>();
         }
 
         /// <summary>
@@ -97,7 +97,7 @@ namespace Paleo.Common {
         /// <param name="Apply">Method called on each val update.</param>
         public void AddVal(AnimationCurve c, float start, float end, Action<float> Apply) {
 
-            _vals.Add(new AnimData() {
+            _anims.Add(new AnimData() {
                 Apply = Apply, curve = c, start = start, end = end
             });
         }
@@ -109,7 +109,7 @@ namespace Paleo.Common {
         /// <param name="Done">Called when the animation is over, or stopped.</param>
         public void Run(PlayMode m = PlayMode.FORWARD, Action Done = null) {
 
-            if (_vals.Count == 0) {
+            if (_anims.Count == 0) {
                 throw new Exception("Attempting to run an empty animator.");
             }
             if (_coroutine != null) {
@@ -163,7 +163,7 @@ namespace Paleo.Common {
                 }
                 float evalTime = forward ? normalizedTime : 1f - normalizedTime;
 
-                foreach (AnimData anim in _vals) {
+                foreach (AnimData anim in _anims) {
 
                     // Apply curve value, or target value at the end of a cycle.
                     float val = finished ? forward ? anim.end : anim.start
