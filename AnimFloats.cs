@@ -3,6 +3,11 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
+/// ***********************
+/// *** Paleo Games LLC ***
+/// ***********************
+/// Read LICENSE file for usage restrictions.
+///
 namespace Paleo.Common {
 
     /// <summary>
