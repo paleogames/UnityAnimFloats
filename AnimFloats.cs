@@ -12,7 +12,7 @@ using UnityEngine;
 namespace Paleo.Common {
 
     /// <summary>
-    /// Interpolate a collection of numeric values within a given time frame.
+    /// Interpolate numeric values within a given time frame.
     /// </summary>
     public sealed class AnimFloats {
 
@@ -48,7 +48,7 @@ namespace Paleo.Common {
             IMMEDIATE = 1,
 
             /// <summary>
-            /// Stop the animation at the end of the current cycle (loop only).
+            /// Stop the animation at the end of the current cycle.
             /// In the forward cycle of a REVERSE_LOOP, a reverse cycle is added to get back to start value.
             /// </summary>
             FINISH_CYCLE = 2,
@@ -73,9 +73,6 @@ namespace Paleo.Common {
         readonly decimal _duration;
         StopMode _interrupt = 0;
 
-        /// <summary>
-        /// Initialize an Animator.
-        /// </summary>
         /// <param name="host">Monobehavior component to host the anim coroutine. Usually the sender.</param>
         /// <param name="duration">Total duration of the animation in seconds.</param>
         /// <param name="fps">Update animation this many times per seconds.</param>
@@ -102,12 +99,16 @@ namespace Paleo.Common {
             });
         }
 
+        public bool IsPlaying() {
+            return _coroutine != null;
+        }
+
         /// <summary>
         /// Execute the animation. The most recent call takes over a running animation.
         /// </summary>
         /// <param name="m">Lookup enum inline doc for usage.</param>
         /// <param name="Done">Called when the animation is over, or stopped.</param>
-        public void Run(PlayMode m = PlayMode.FORWARD, Action Done = null) {
+        public void Play(PlayMode m = PlayMode.FORWARD, Action Done = null) {
 
             if (_anims.Count == 0) {
                 throw new Exception("Attempting to run an empty animator.");
@@ -125,11 +126,11 @@ namespace Paleo.Common {
         /// <param name="m">Lookup enum inline doc for usage.</param>
         public void Stop(StopMode m = StopMode.FINISH_CYCLE) {
 
-            _interrupt = m;
-
             if (m.Equals(StopMode.IMMEDIATE) && _coroutine != null) {
                 _host.StopCoroutine(_coroutine);
                 _coroutine = null;
+            } else {
+                _interrupt = m;
             }
         }
 
@@ -183,8 +184,8 @@ namespace Paleo.Common {
                     startTime = DateTime.Now.Ticks;
                 }
             }
-            Done?.Invoke();
             _coroutine = null;
+            Done?.Invoke();
         }
     }
 }
