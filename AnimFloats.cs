@@ -16,7 +16,7 @@ namespace Paleo.Common {
     /// </summary>
     public sealed class AnimFloats {
 
-        public enum PlayMode : ushort {
+        public enum PlayMode : byte {
 
             /// <summary>
             /// Play once.
@@ -29,18 +29,23 @@ namespace Paleo.Common {
             REVERSE,
 
             /// <summary>
+            /// Once forward, once in reverse.
+            /// </summary>
+            FORWARD_REVERSE,
+
+            /// <summary>
             /// Play forward repeatingly until stopped.
             /// </summary>
-            FORWARD_LOOP,
+            LOOP_FORWARD,
 
             /// <summary>
             /// Play forward, then in reverse, then forward, etc... until stopped.
             /// </summary>
-            REVERSE_LOOP
+            LOOP_FORWARD_REVERSE
         }
 
         // Value 0 is reserved for not stopping.
-        public enum StopMode : ushort {
+        public enum StopMode : byte {
 
             /// <summary>
             /// Interrupt the animation at its current value.
@@ -63,42 +68,67 @@ namespace Paleo.Common {
 
             public Action<float> Apply;
             public AnimationCurve curve;
-            public float start, end;
+            public float min, max;
+            public bool interpolate;
         }
 
+        /// <summary>
+        /// Prevent two instances with the same label from playing at the same time.
+        /// </summary>
+        static Dictionary<string, bool> _labelIsPlaying = new Dictionary<string, bool>();
+
+        readonly decimal _duration;
+        readonly string _label;
         Coroutine _coroutine;
         List<AnimData> _anims;
         MonoBehaviour _host;
-        WaitForSeconds _timer;
-        readonly decimal _duration;
         StopMode _interrupt = 0;
+        WaitForSeconds _timer;
 
         /// <param name="host">Monobehavior component to host the anim coroutine. Usually the sender.</param>
         /// <param name="duration">Total duration of the animation in seconds.</param>
         /// <param name="fps">Update animation this many times per seconds.</param>
-        public AnimFloats(MonoBehaviour host, float duration, float fps) {
+        /// <param name="label">Prevent two instances with the same label from playing at the same time.</param>
+        public AnimFloats(MonoBehaviour host, float duration, float fps, string label = null) {
 
             _host = host;
             // Stored in milliseconds.
             _duration = (decimal)duration * 1000;
             _timer = new WaitForSeconds(1f / fps);
             _anims = new List<AnimData>();
+
+            if (!string.IsNullOrEmpty(label)) {
+                if (!_labelIsPlaying.ContainsKey(label)) {
+                    _labelIsPlaying.Add(label, false);
+                }
+                _label = label;
+            }
         }
 
         /// <summary>
-        /// Add a parameter to the current animation.
+        /// The value of the curve is injected directly in Apply().
         /// </summary>
         /// <param name="c">Curve applied to each animation step.</param>
-        /// <param name="start">Initial value.</param>
-        /// <param name="end">Target value.</param>
         /// <param name="Apply">Method called on each val update.</param>
-        public void AddVal(AnimationCurve c, float start, float end, Action<float> Apply) {
+        public void AddProperty(AnimationCurve c, Action<float> Apply) {
+            AddProperty(c, 0f, 0f, Apply);
+        }
+
+        /// <summary>
+        /// Interpolates between min and max values according to the curve.
+        /// </summary>
+        /// <param name="c">Curve applied to each animation step.</param>
+        /// <param name="min">When the anim curve is at its lowest.</param>
+        /// <param name="max">When the anim curve is at its highest.</param>
+        /// <param name="Apply">Method called on each val update.</param>
+        public void AddProperty(AnimationCurve c, float min, float max, Action<float> Apply) {
 
             _anims.Add(new AnimData() {
-                Apply = Apply, curve = c, start = start, end = end
+                Apply = Apply, curve = c, min = min, max = max, interpolate = !min.Equals(max)
             });
         }
 
+        /// <returns>True if this instance is playing.</returns>
         public bool IsPlaying() {
             return _coroutine != null;
         }
@@ -107,17 +137,28 @@ namespace Paleo.Common {
         /// Execute the animation. The most recent call takes over a running animation.
         /// </summary>
         /// <param name="m">Lookup enum inline doc for usage.</param>
-        /// <param name="Done">Called when the animation is over, or stopped.</param>
-        public void Play(PlayMode m = PlayMode.FORWARD, Action Done = null) {
+        /// <param name="EndCycle">Called at the end of anim, loop cycle, or when stopped.</param>
+        /// <returns>False when another animation with the same label is already playing.</returns>
+        public bool Play(PlayMode m = PlayMode.FORWARD, Action EndCycle = null) {
 
             if (_anims.Count == 0) {
                 throw new Exception("Attempting to run an empty animator.");
             }
-            if (_coroutine != null) {
+            if (IsPlaying()) {
                 _host.StopCoroutine(_coroutine);
+                HasStopped(null);
+            }
+            if (!string.IsNullOrEmpty(_label)) {
+
+                // Other instance with same label playing.
+                if (_labelIsPlaying[_label]) {
+                    return false;
+                }
+                _labelIsPlaying[_label] = true;
             }
             _interrupt = 0;
-            _coroutine = _host.StartCoroutine(UpdateVals(m, Done));
+            _coroutine = _host.StartCoroutine(UpdateVals(m, EndCycle));
+            return true;
         }
 
         /// <summary>
@@ -125,23 +166,29 @@ namespace Paleo.Common {
         /// </summary>
         /// <param name="m">Lookup enum inline doc for usage.</param>
         public void Stop(StopMode m = StopMode.FINISH_CYCLE) {
-
-            if (m.Equals(StopMode.IMMEDIATE) && _coroutine != null) {
-                _host.StopCoroutine(_coroutine);
-                _coroutine = null;
-            } else {
-                _interrupt = m;
-            }
+            _interrupt = m;
         }
 
-        private IEnumerator UpdateVals(PlayMode m, Action Done) {
+        /// <summary>
+        /// Cleanup after anim.
+        /// </summary>
+        private void HasStopped(Action Done) {
+
+            _coroutine = null;
+            if (!string.IsNullOrEmpty(_label)) {
+                _labelIsPlaying[_label] = false;
+            }
+            Done?.Invoke();
+        }
+
+        private IEnumerator UpdateVals(PlayMode m, Action EndCycle) {
 
             bool finished = false;
             bool forward = !m.Equals(PlayMode.REVERSE);
-            bool loop = m.Equals(PlayMode.FORWARD_LOOP) || m.Equals(PlayMode.REVERSE_LOOP);
+            bool loop = m.Equals(PlayMode.LOOP_FORWARD) || m.Equals(PlayMode.LOOP_FORWARD_REVERSE);
             decimal startTime = DateTime.Now.Ticks;
 
-            while (!finished) {
+            while (!finished && !_interrupt.Equals(StopMode.IMMEDIATE)) {
 
                 yield return _timer;
 
@@ -166,26 +213,38 @@ namespace Paleo.Common {
 
                 foreach (AnimData anim in _anims) {
 
-                    // Apply curve value, or target value at the end of a cycle.
-                    float val = finished ? forward ? anim.end : anim.start
-                        : Mathf.Lerp(anim.start, anim.end, anim.curve.Evaluate(evalTime));
-
-                    anim.Apply(val);
-                }
-                // Loops override finished behavior.
-                if (finished && loop) {
-                    if (m.Equals(PlayMode.REVERSE_LOOP)) {
-                        forward = !forward;
-                        // Add a reverse cycle to get back to start value.
-                        finished = _interrupt.Equals(StopMode.FINISH_CYCLE) && forward ? true : false;
+                    // Original values are applied at the end of a cycle.
+                    if (anim.interpolate) {
+                        anim.Apply(finished ? forward ? anim.max : anim.min
+                            : Mathf.Lerp(anim.min, anim.max, anim.curve.Evaluate(evalTime)));
                     } else {
-                        finished = _interrupt > 0;
+                        anim.Apply(finished ? forward ? anim.curve.Evaluate(1f) : anim.curve.Evaluate(0f)
+                            : anim.curve.Evaluate(evalTime));
+                    }
+                }
+                // Override finished behavior.
+                if (finished) {
+                    if (loop) {
+                        if (m.Equals(PlayMode.LOOP_FORWARD_REVERSE)) {
+                            forward = !forward;
+                            // Add a reverse cycle to get back to start value.
+                            finished = _interrupt.Equals(StopMode.FINISH_CYCLE) && forward ? true : false;
+                        } else {
+                            finished = _interrupt > 0;
+                        }
+                        // Callback each loop cycle, except beginning of reverse cycle.
+                        if (forward && !finished) {
+                            EndCycle?.Invoke();
+                        }
+                    } else if (m.Equals(PlayMode.FORWARD_REVERSE) && _interrupt == 0 && forward) {
+                        // One reverse play for this mode.
+                        forward = !forward;
+                        finished = false;
                     }
                     startTime = DateTime.Now.Ticks;
                 }
             }
-            _coroutine = null;
-            Done?.Invoke();
+            HasStopped(EndCycle);
         }
     }
 }
